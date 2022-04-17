@@ -1,21 +1,25 @@
 #include <ETH.h>
 #include <WiFi.h>
 #include <EEPROM.h>
+#include <iostream>
+#include <string>
 #include <DHTesp.h>
 #include <Wire.h>
 #include <SocketIOClient.h>
 #include <ArduinoJson.h>
 #include "esp_task_wdt.h"
 
-#define WDT_TIMEOUT 3
+using namespace std;
+
+#define WDT_TIMEOUT 15
 #define ESP32
 #define DHTpin 23
 
 const char *ssid = "Lau 6";        // Lau 6
 const char *password = "Sixfloor"; // Sixfloor
-char host[] = "192.168.0.108"; //nam-cu.herokuapp.com
+char host[] = "nam-cu.herokuapp.com";         // nam-cu.herokuapp.com
 char namespace_32[] = "sensor_board";
-int port = 3000; //80
+int port = 80; // 80
 extern String RID;
 extern String Rname;
 extern String Rcontent;
@@ -33,6 +37,10 @@ unsigned long timeCounter = 0;
 // Variable
 char esp32WorkingTime[100];
 bool isPing = false;
+
+// Array
+String system_information[5] = {"ram", "ip", "rssi", "cpu clock", "working time"};
+bool sensor_status[] = {true};
 
 String ip2Str(IPAddress ip)
 {
@@ -122,90 +130,85 @@ void handleEventDisconnectServer()
   isPing = false;
 }
 
-void sendData(int temp_value, int humi_value)
+void sendData(String sensor_name, int sensor_index, String value_sensor_name, int EPPROM_index, int value)
 {
-  // Read value from EEPROM
-  int temp_value_EEPROM = EEPROM.read(0);
-  int humi_value_EEPROM = EEPROM.read(1);
-
-  // Is check value change?
-  if (temp_value != temp_value_EEPROM)
+  if (sensor_status[sensor_index] == true)
   {
-    client.sendNumber("temp_value", temp_value);
-    EEPROM.write(0, temp_value);
-    Serial.println("temp value is change");
+    // Read value from EEPROM
+    int EPPROM_value = EEPROM.read(EPPROM_index);
+
+    // Is check value change?
+    if (value != EPPROM_value)
+    {
+      String JSON;
+      StaticJsonBuffer<200> jsonBuffer;
+      JsonArray &array = jsonBuffer.createArray();
+      array.add(sensor_name);
+      array.add(value_sensor_name);
+      array.add(value);
+      array.printTo(JSON);
+      client.sendJSON("sensor_data", JSON);
+      EEPROM.write(EPPROM_index, value);
+      Serial.println("temp value is change");
+    }
+
+    Serial.print(sensor_name);
+    Serial.print(value);
+    Serial.print("EPPROM_value: ");
+    Serial.println(EPPROM_value);
+
+    // EEPROM commit
+    EEPROM.commit();
   }
-
-  if (humi_value != humi_value_EEPROM)
-  {
-    client.sendNumber("humi_value", humi_value);
-    EEPROM.write(1, humi_value);
-    Serial.println("humi value is change");
-  }
-
-  Serial.print("Temp: ");
-  Serial.print(temp_value);
-  Serial.print("Temp EEPROM: ");
-  Serial.print(temp_value_EEPROM);
-  Serial.print("Humi: ");
-  Serial.print(humi_value);
-  Serial.print("Humi EEPROM: ");
-  Serial.println(humi_value_EEPROM);
-
-  // EEPROM commit
-  EEPROM.commit();
 }
 
-void checkStatusOfSensor(int temp_value, int humi_value)
+template <typename val>
+void send_system_information_value(String name, int index, val value)
+{
+  if (String(value) != system_information[index])
+  {
+    client.send("system_information", name, String(value));
+    system_information[index] = value;
+  }
+}
+
+void checkStatusOfSensor(String sensor_name, int index, int sensor_value, int dk)
 {
   // check error
-  if (isnan(temp_value) || temp_value >= 200 || humi_value >= 200 || isnan(humi_value))
+  if (isnan(sensor_value) || sensor_value >= dk)
   {
-    client.sendNumber("StatusOfDHT", 0);
+    if (sensor_status[index] != false)
+    {
+      client.send("sensor_status", sensor_name, "false");
+      sensor_status[index] = false;
+    }
   }
   else
   {
-    client.sendNumber("StatusOfDHT", 1);
-    sendData(temp_value, humi_value);
+    if (sensor_status[index] != true)
+    {
+      client.send("sensor_status", sensor_name, "true");
+      sensor_status[index] = true;
+    }
   }
+
+  Serial.print("sensor_name: ");
+  Serial.println(sensor_status[index]);
 }
 
-void readDataSensor()
+void get_system_information()
 {
-  // Read Value and status DH11
-  int temp_value = dht1.getTemperature();
-  int humi_value = dht1.getHumidity();
-
-  checkStatusOfSensor(temp_value, humi_value);
+  send_system_information_value("ram", 0, esp_get_free_heap_size());
+  send_system_information_value("ip", 1, ip2Str(WiFi.localIP()));
+  send_system_information_value("rssi", 2, WiFi.RSSI());
+  send_system_information_value("cpu_clock", 3, getCpuFrequencyMhz());
+  send_system_information_value("working_time", 4, esp32WorkingTime);
 }
 
-void sendSensorBoardInformation()
+void get_data_sensor()
 {
-  String JSON;
-  long rssi = WiFi.RSSI();
-  long ramLeft = esp_get_free_heap_size();
-  long clockCPU = getCpuFrequencyMhz();
-
-  Serial.print("rssi: ");
-  Serial.print(rssi);
-  Serial.print("ramLeft: ");
-  Serial.print(ramLeft);
-  Serial.print("esp32WorkingTime: ");
-  Serial.print(esp32WorkingTime);
-  Serial.print("clockCPU: ");
-  Serial.println(clockCPU);
-
-  StaticJsonBuffer<400> jsonBuffer;
-  JsonObject &root1 = jsonBuffer.createObject();
-  root1["signal"] = rssi;
-  root1["ip"] = ip2Str(WiFi.localIP());
-  root1["ramLeft"] = ramLeft;
-  root1["clockCPU"] = clockCPU;
-  root1["uptime"] = esp32WorkingTime;
-  root1.printTo(JSON);
-  client.sendJSON("sensor_board_information", JSON);
-  JSON = "";
-  jsonBuffer.clear();
+  sendData("DHT 11", 0, "temperature", 0, dht1.getTemperature());
+  sendData("DHT 11", 0, "humidity", 1, dht1.getHumidity());
 }
 
 void initWDT()
@@ -223,7 +226,7 @@ void handleWorkingTime()
   }
 
   int hour = timeCounter / 60;
-  int minute = timeCounter - ( hour * 60 );
+  int minute = timeCounter - (hour * 60);
   sprintf(esp32WorkingTime, "%d hour %d minute", hour, minute);
 }
 
@@ -245,6 +248,7 @@ void setup()
   moduleConfig();
   delay(100);
   initWDT();
+  checkStatusOfSensor("DHT 11", 0, dht1.getTemperature(), 100);
 }
 
 void loop()
@@ -261,7 +265,8 @@ void loop()
       isPing = true;
     }
 
-    if (RID == "restart") {
+    if (RID == "restart")
+    {
       Serial.println("Restart");
       ESP.restart();
     }
@@ -272,8 +277,9 @@ void loop()
   if (millis() - timeGetValue > 5000)
   {
     timeGetValue = millis();
-    readDataSensor();
-    sendSensorBoardInformation();
+    get_system_information();
+    checkStatusOfSensor("DHT 11", 0, dht1.getTemperature(), 100);
+    get_data_sensor();
   }
   handleWorkingTime();
 }
