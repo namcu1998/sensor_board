@@ -4,6 +4,7 @@
 #include <iostream>
 #include <string>
 #include <DHTesp.h>
+#include <BH1750.h>
 #include <Wire.h>
 #include <SocketIOClient.h>
 #include <ArduinoJson.h>
@@ -18,7 +19,7 @@ using namespace std;
 const char *ssid = "Lau 6";        // Lau 6
 const char *password = "Sixfloor"; // Sixfloor
 char host[] = "nam-cu.herokuapp.com";         // nam-cu.herokuapp.com
-char namespace_32[] = "sensor_board";
+char namespace_32[] = "sensor_board_1";
 int port = 80; // 80
 extern String RID;
 extern String Rname;
@@ -27,6 +28,7 @@ extern String Rfull;
 
 SocketIOClient client;
 DHTesp dht1;
+BH1750 lightMeter;
 
 // Timer variable
 unsigned long pingTimeOut = 0;
@@ -209,6 +211,7 @@ void get_data_sensor()
 {
   sendData("DHT 11", 0, "temperature", 0, dht1.getTemperature());
   sendData("DHT 11", 0, "humidity", 1, dht1.getHumidity());
+  sendData("BH1750", 1, "humidity", 2, lightMeter.readLightLevel());
 }
 
 void initWDT()
@@ -234,6 +237,7 @@ void initModule()
 {
   Serial.begin(115200);
   Wire.begin();
+  lightMeter.begin();
   EEPROM.begin(12);
 }
 
@@ -279,6 +283,7 @@ void loop()
     timeGetValue = millis();
     get_system_information();
     checkStatusOfSensor("DHT 11", 0, dht1.getTemperature(), 100);
+    checkStatusOfSensor("BH1750", 1, lightMeter.readLightLevel(), 100000);
     get_data_sensor();
   }
   handleWorkingTime();
